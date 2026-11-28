@@ -1,3 +1,4 @@
+#include "render/core/render_math.h"
 #include "render/text/cairo_text_renderer.h"
 #include "tests/test_check.h"
 
@@ -5,6 +6,7 @@
 #include <cmath>
 #include <string>
 #include <string_view>
+#include <wayland-util.h>
 
 namespace {
 
@@ -90,6 +92,37 @@ namespace {
     }
   }
 
+  // Ceiled buffer extents paired with uniform renderScale projection keep
+  // fixed logical positions on identical buffer pixels across resize steps.
+  void fractionalScaleResizeStabilityCase() {
+    constexpr std::uint32_t kDenom = 120U;
+    constexpr std::array<std::uint32_t, 4> kNumerators{140U, 150U, 160U, 180U};
+    constexpr float kFixedY = 24.3F;
+
+    for (const std::uint32_t num : kNumerators) {
+      const float scale = static_cast<float>(num) / static_cast<float>(kDenom);
+      const double exactScale = static_cast<double>(num) / static_cast<double>(kDenom);
+      float expectedBufferY = -1.0F;
+      for (std::uint32_t logicalH = 500U; logicalH <= 520U; ++logicalH) {
+        const auto bh = static_cast<std::uint32_t>(
+            (static_cast<std::uint64_t>(logicalH) * static_cast<std::uint64_t>(num) + (kDenom - 1U)) / kDenom
+        );
+        TEST_CHECK(static_cast<double>(bh) >= static_cast<double>(logicalH) * exactScale);
+        const wl_fixed_t srcH = wl_fixed_from_double(static_cast<double>(logicalH) * exactScale);
+        TEST_CHECK(srcH <= wl_fixed_from_int(static_cast<int>(bh)));
+
+        const float projH = static_cast<float>(bh) / scale;
+        const float snappedLogicalY = snapToBufferPixel(kFixedY, scale);
+        const float bufferY = (snappedLogicalY / projH) * static_cast<float>(bh);
+        if (expectedBufferY < 0.0F) {
+          expectedBufferY = bufferY;
+        } else {
+          TEST_CHECK(std::abs(bufferY - expectedBufferY) < 0.001F);
+        }
+      }
+    }
+  }
+
 } // namespace
 
 int main() {
@@ -99,5 +132,6 @@ int main() {
   scaleKeyedCacheCase(renderer);
   wrappingBoundaryCase(renderer);
   middleEllipsisSpacingCase(renderer);
+  fractionalScaleResizeStabilityCase();
   return 0;
 }
